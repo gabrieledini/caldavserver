@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Server CalDAV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f5f6f9;--surface:#fff;--surface2:#eceef3;--line:#e1e4ea;--ink:#141821;--muted:#6b7280;--accent:#2f6df6;--accent-ink:#fff;--danger:#d84c4c;--ok:#1f9d55;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--surface:#171b24;--surface2:#1f2531;--line:#262d3a;--ink:#eef1f6;--muted:#8b93a3;--accent:#6b9cff;--accent-ink:#0b1020}}
+:root[data-theme="dark"]{--bg:#0f1218;--surface:#171b24;--surface2:#1f2531;--line:#262d3a;--ink:#eef1f6;--muted:#8b93a3;--accent:#6b9cff;--accent-ink:#0b1020}
+*{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Manrope,system-ui,sans-serif}
+button,input{font:inherit;color:inherit}
+button{background:var(--surface2);border:0;border-radius:12px;padding:.55rem .9rem;cursor:pointer;font-weight:600}
+button.primary{background:var(--accent);color:var(--accent-ink)}
+button.danger{background:transparent;color:var(--danger)}
+input{width:100%;background:var(--surface2);border:1px solid transparent;border-radius:12px;padding:.65rem .8rem}
+input:focus{border-color:var(--accent);outline:none;background:var(--surface)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+label{display:block;font-size:.8rem;font-weight:600;color:var(--muted);margin:.9rem 0 .3rem}
+.wrap{max-width:640px;margin:0 auto;padding:1.4rem 1rem 3rem}
+h1{font-size:1.7rem;font-weight:800;letter-spacing:-.02em;margin:0 0 .2rem}
+.sub{color:var(--muted);margin:0 0 1.2rem}
+.card{background:var(--surface);border-radius:18px;padding:1.1rem 1.2rem;margin:1rem 0;box-shadow:0 1px 2px rgba(20,24,33,.05)}
+.card h2{font-size:1.05rem;margin:0 0 .4rem;font-weight:800}
+.url{display:flex;gap:.5rem;align-items:center;background:var(--surface2);border-radius:12px;padding:.6rem .8rem;font:.9rem ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.url button{padding:.3rem .6rem;font-size:.8rem;white-space:nowrap}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}
+.row{display:flex;gap:.5rem;margin-top:1rem;align-items:center;flex-wrap:wrap}
+.status{font-size:.85rem;color:var(--muted);min-height:1.2rem;margin-top:.5rem}
+.status.err{color:var(--danger)}.status.ok{color:var(--ok)}
+.cal{display:grid;grid-template-columns:auto 1fr auto auto;gap:.7rem;align-items:center;padding:.65rem 0;border-top:1px solid var(--line)}
+.cal:first-child{border-top:0}
+.cal i{width:.85rem;height:.85rem;border-radius:50%;display:block}
+.cal b{font-weight:600}
+.cal small{display:block;color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:.75rem}
+.cal .n{color:var(--muted);font-size:.85rem;white-space:nowrap}
+.hint{color:var(--muted);font-size:.85rem}
+code{background:var(--surface2);padding:.1em .35em;border-radius:6px;font-size:.85em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Server CalDAV</h1>
+  <p class="sub">Prototipo su Netlify Functions + Blobs. Un utente, calendari illimitati, eventi come file .ics.</p>
+
+  <div class="card">
+    <h2>Indirizzo da usare nei client</h2>
+    <div class="url"><span id="url"></span><button id="copy">copia</button></div>
+    <p class="hint">Utente e password sono le variabili d'ambiente <code>DAV_USER</code> e <code>DAV_PASS</code> del sito (default <code>demo</code>/<code>demo</code>). Il server risponde con header CORS, quindi l'app Agenda può puntarci direttamente, senza proxy.</p>
+  </div>
+
+  <div class="card">
+    <h2>Accesso</h2>
+    <div class="two">
+      <div><label for="u">Utente</label><input id="u" autocomplete="username"></div>
+      <div><label for="p">Password</label><input id="p" type="password" autocomplete="current-password"></div>
+    </div>
+    <div class="row"><button id="login" class="primary">Connetti</button><span class="status" id="st"></span></div>
+  </div>
+
+  <div class="card" id="calsCard" hidden>
+    <h2>Calendari</h2>
+    <div id="cals"></div>
+    <label for="newName">Nuovo calendario</label>
+    <div class="two">
+      <input id="newName" placeholder="Nome, es. Lavoro">
+      <input id="newColor" type="color" value="#2f6df6" style="padding:.2rem;height:2.9rem">
+    </div>
+    <div class="row"><button id="mk" class="primary">Crea calendario</button><span class="status" id="mkSt"></span></div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const BASE=location.origin+'/dav/';
+$('url').textContent=BASE;
+$('copy').onclick=()=>navigator.clipboard?.writeText(BASE).then(()=>{$('copy').textContent='copiato';setTimeout(()=>$('copy').textContent='copia',1200)});
+let auth=null;
+try{const s=sessionStorage.getItem('dav-auth');if(s){auth=s;const [u]=atob(s).split(':');$('u').value=u}}catch{}
+
+async function dav(method,url,{headers={},body}={}){
+  const r=await fetch(url,{method,headers:{Authorization:'Basic '+auth,...headers},body});
+  const text=await r.text();
+  if(!r.ok)throw new Error(r.status===401?'Credenziali errate':`${r.status} ${text}`);
+  return text;
+}
+const parse=t=>new DOMParser().parseFromString(t,'application/xml');
+const D='DAV:',C='urn:ietf:params:xml:ns:caldav',IC='http://apple.com/ns/ical/';
+const txt=(n,ns,tag)=>n.getElementsByTagNameNS(ns,tag)[0]?.textContent.trim()||'';
+
+async function load(){
+  const body=`<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:ic="http://apple.com/ns/ical/"><d:prop><d:resourcetype/><d:displayname/><ic:calendar-color/></d:prop></d:propfind>`;
+  const doc=parse(await dav('PROPFIND',BASE,{headers:{Depth:'1','Content-Type':'application/xml'},body}));
+  const cals=[...doc.getElementsByTagNameNS(D,'response')].filter(r=>r.getElementsByTagNameNS(C,'calendar').length)
+    .map(r=>({href:txt(r,D,'href'),name:txt(r,D,'displayname'),color:txt(r,IC,'calendar-color')}));
+  const box=$('cals');box.innerHTML='';
+  for(const c of cals){
+    const n=(await dav('PROPFIND',location.origin+c.href,{headers:{Depth:'1','Content-Type':'application/xml'},body})).match(/<d:getetag>/g)?.length||0;
+    const row=document.createElement('div');row.className='cal';
+    row.innerHTML=`<i style="background:${c.color||'#888'}"></i><div><b></b><small></small></div><span class="n">${n} eventi</span>`;
+    row.querySelector('b').textContent=c.name;row.querySelector('small').textContent=location.origin+c.href;
+    const del=document.createElement('button');del.className='danger';del.textContent='elimina';
+    del.onclick=async()=>{if(!confirm(`Eliminare "${c.name}" e tutti i suoi eventi?`))return;await dav('DELETE',location.origin+c.href);load()};
+    row.appendChild(del);box.appendChild(row);
+  }
+  $('calsCard').hidden=false;
+}
+$('login').onclick=async()=>{
+  auth=btoa(unescape(encodeURIComponent($('u').value.trim()+':'+$('p').value)));
+  $('st').className='status';$('st').textContent='connetto…';
+  try{await load();sessionStorage.setItem('dav-auth',auth);$('st').className='status ok';$('st').textContent='connesso'}
+  catch(e){$('st').className='status err';$('st').textContent=e.message;$('calsCard').hidden=true}
+};
+$('mk').onclick=async()=>{
+  const name=$('newName').value.trim();if(!name)return;
+  const slug=name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'cal';
+  const body=`<?xml version="1.0"?><c:mkcalendar xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:ic="http://apple.com/ns/ical/"><d:set><d:prop><d:displayname>${name.replace(/[<&]/g,'')}</d:displayname><ic:calendar-color>${$('newColor').value}</ic:calendar-color></d:prop></d:set></c:mkcalendar>`;
+  $('mkSt').className='status';$('mkSt').textContent='creo…';
+  try{await dav('MKCALENDAR',BASE+slug+'/',{headers:{'Content-Type':'application/xml'},body});$('newName').value='';$('mkSt').className='status ok';$('mkSt').textContent='creato';load()}
+  catch(e){$('mkSt').className='status err';$('mkSt').textContent=e.message}
+};
+if(auth)load().catch(()=>{});
+</script>
+</body>
+</html>
